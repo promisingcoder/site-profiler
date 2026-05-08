@@ -25,22 +25,15 @@ from ..base import (
 )
 
 
-def _has_recaptcha_script(pair: FetchedPair) -> tuple[list[str], bool, bool]:
-    """Returns (markers, has_enterprise_path, has_v3_render_param)."""
+def _recaptcha_script_markers(pair: FetchedPair) -> list[str]:
+    """Markers for any reCAPTCHA loader script. Variant probes derive
+    enterprise/v3 separately (see ``RecaptchaEnterprise`` / ``RecaptchaV3``)."""
     markers: list[str] = []
-    enterprise = False
-    has_render_param = False
     for src in pair.home.script_srcs:
         s = src.lower()
         if "/recaptcha/" in s or "recaptcha.net" in s or "google.com/recaptcha" in s:
             markers.append(f"script src: {src}")
-            if "enterprise.js" in s:
-                enterprise = True
-            if "render=" in s:
-                # ?render=<sitekey> is a v3 marker; ?render=explicit is v2 explicit
-                if "render=explicit" not in s:
-                    has_render_param = True
-    return markers, enterprise, has_render_param
+    return markers
 
 
 class RecaptchaV2Checkbox(VariantProbe):
@@ -122,7 +115,7 @@ class Recaptcha(Detector):
     abstract = False
 
     def base_match(self, pair: FetchedPair) -> BaseMatch:
-        markers, _enterprise, _v3 = _has_recaptcha_script(pair)
+        markers = _recaptcha_script_markers(pair)
         # CSP-only allowlisting: weaker — just informational, captured separately
         # by csp_hints. Still we mention it as a marker.
         if not markers:

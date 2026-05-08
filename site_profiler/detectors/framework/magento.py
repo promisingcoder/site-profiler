@@ -51,8 +51,13 @@ class MagentoV2(VariantProbe):
             markers.append('<script type="text/x-magento-init">')
         if "data-requiremodule=\"mage/" in body or "data-requiremodule=\"magento_" in body:
             markers.append("data-requiremodule=Mage/Magento_* (Magento 2)")
-        if "mage-cache-storage" in (c.lower() for c in pair.home.set_cookie_names):
-            markers.append("mage-cache-storage cookie")
+        # Substring match — covers `mage-cache-storage`,
+        # `mage-cache-storage-section-invalidation`, `mage-translation-storage`,
+        # and any other mage-cache-* / mage-translation-* siblings.
+        for c in pair.home.set_cookie_names:
+            cl = c.lower()
+            if "mage-cache-storage" in cl or "mage-translation-storage" in cl:
+                markers.append(f"cookie: {c}")
         if not markers:
             return None
         return Variant(name=self.name, label=self.label, confidence=0.95, markers=markers)

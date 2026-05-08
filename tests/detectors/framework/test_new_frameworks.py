@@ -186,6 +186,22 @@ def test_magento_v2_variant():
     assert "v2" in names
 
 
+def test_magento_v2_picks_up_cache_storage_section_invalidation_cookie():
+    """Regression: previously the M2 probe used exact-match against
+    'mage-cache-storage' and missed the documented sibling cookies
+    ``mage-cache-storage-section-invalidation`` and ``mage-translation-storage``."""
+    ev = _run(
+        "magento",
+        set_cookies=["mage-cache-storage-section-invalidation=abc"],
+        html='<html><body><script type="text/x-magento-init">{}</script></body></html>',
+    )
+    assert ev is not None
+    names = {v.name for v in ev.variants}
+    assert "v2" in names
+    v2 = next(v for v in ev.variants if v.name == "v2")
+    assert any("mage-cache-storage-section-invalidation" in m for m in v2.markers)
+
+
 # --- Joomla ----------------------------------------------------------------
 
 

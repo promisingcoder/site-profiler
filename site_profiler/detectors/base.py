@@ -45,14 +45,33 @@ class VariantProbe(ABC):
     """A specific sub-form a detector can take.
 
     Subclass and implement :meth:`probe`. The parent ``Detector`` instantiates
-    each declared variant probe once and queries it after the base match
-    succeeds. Multiple variants can match a single page (e.g. a Next.js page
-    can simultaneously expose Pages Router data and App Router RSC streams,
-    though that is unusual).
+    each declared variant probe **once at registration time** (not per
+    detect call) and queries the cached instance after the base match
+    succeeds. Multiple variants can match a single page (e.g. a Next.js
+    page can simultaneously expose Pages Router data and App Router RSC
+    streams, though that is unusual).
+
+    Concrete subclasses must set ``name`` and ``label`` as class vars or
+    a TypeError is raised at class-creation time. Intermediate ABCs that
+    don't define ``probe`` themselves are fine — Python's ABC machinery
+    keeps them un-instantiable.
     """
 
     name: ClassVar[str] = ""
     label: ClassVar[str] = ""
+
+    def __init_subclass__(cls, **kw):
+        super().__init_subclass__(**kw)
+        # Skip the check for classes that are still abstract (didn't
+        # implement `probe`) — those can't be instantiated anyway, and
+        # a project may want intermediate VariantProbe ABCs.
+        if getattr(cls, "__abstractmethods__", None):
+            return
+        if not cls.name or not cls.label:
+            raise TypeError(
+                f"VariantProbe {cls.__name__} must set both name and label "
+                f"(or remain abstract by not implementing `probe`)"
+            )
 
     @abstractmethod
     def probe(self, pair: FetchedPair) -> Variant | None:
@@ -326,14 +345,18 @@ class Detector(ABC):
     @classmethod
     def _register(cls) -> None:
         instance = cls()
+        # Cache variant probe instances at registration time. Probes are
+        # stateless so reuse is safe and saves an alloc per detect call.
+        variant_instances: list[VariantProbe] = [vp() for vp in cls.variants]
 
         def _runner(pair: FetchedPair) -> Evidence | None:
             return instance.detect(pair)
 
         _runner.__name__ = cls.name
         _runner.__qualname__ = f"{cls.__name__}.detect"
-        cls._instance = instance     # type: ignore[attr-defined]
-        cls._runner = _runner        # type: ignore[attr-defined]
+        cls._instance = instance                          # type: ignore[attr-defined]
+        cls._variant_instances = variant_instances        # type: ignore[attr-defined]
+        cls._runner = _runner                             # type: ignore[attr-defined]
         register(cls.category)(_runner)
 
     @abstractmethod
@@ -352,13 +375,19 @@ class Detector(ABC):
         version = result.version
 
         variants_found: list[Variant] = []
-        for vp_cls in self.variants:
+        # Use cached probe instances populated by _register. Falls back to
+        # ad-hoc instantiation only for the rare case of a Detector built
+        # without going through the registry (e.g. inline test fixtures).
+        probe_instances: list[VariantProbe] = getattr(
+            type(self), "_variant_instances", None
+        ) or [vp() for vp in self.variants]
+        for probe in probe_instances:
             try:
-                v = vp_cls().probe(pair)
+                v = probe.probe(pair)
             except Exception as e:
                 v = Variant(
-                    name=f"_probe_error:{vp_cls.__name__}",
-                    label=f"variant probe error",
+                    name=f"_probe_error:{type(probe).__name__}",
+                    label="variant probe error",
                     confidence=0.0,
                     markers=[f"{type(e).__name__}: {e}"],
                 )
@@ -366,7 +395,10 @@ class Detector(ABC):
                 variants_found.append(v)
 
         if variants_found:
-            confidence = max(confidence, max(v.confidence for v in variants_found))
+            # Variants can confirm but never push past the 0.99 ceiling — a
+            # detector should only hit 1.0 if its primary contract guarantees
+            # it (which we don't currently model).
+            confidence = min(0.99, max(confidence, max(v.confidence for v in variants_found)))
 
         if version is None:
             for v in variants_found:
