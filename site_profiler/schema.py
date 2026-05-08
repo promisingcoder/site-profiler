@@ -23,6 +23,26 @@ class StrategyTier(str, Enum):
     UNKNOWN = "unknown"
 
 
+class Variant(BaseModel):
+    """A specific variant/sub-version of a detected technology.
+
+    Examples: reCAPTCHA `v3` vs `v2_invisible` vs `enterprise`; Next.js
+    `pages_router` vs `app_router`; Shopify `core` vs `hydrogen`.
+
+    Variants do not stand alone — they live inside an Evidence object whose
+    `name` identifies the parent technology. Strategy logic should keep
+    keying on `Evidence.name` (the technology) and only branch on variants
+    when the variant materially changes extraction approach.
+    """
+    model_config = ConfigDict(frozen=False)
+    name: str                              # stable id, e.g. "v3", "app_router"
+    label: str = ""                        # human label, e.g. "reCAPTCHA v3"
+    confidence: float = Field(ge=0.0, le=1.0, default=0.9)
+    markers: list[str] = Field(default_factory=list)
+    version: Optional[str] = None
+    extra: dict[str, str] = Field(default_factory=dict)
+
+
 class Evidence(BaseModel):
     model_config = ConfigDict(frozen=False)
     name: str
@@ -30,6 +50,11 @@ class Evidence(BaseModel):
     confidence: float = Field(ge=0.0, le=1.0)
     markers: list[str] = Field(default_factory=list)
     extra: dict[str, str] = Field(default_factory=dict)
+    # Optional: captured version string ("13.4.0", "10.5", etc.)
+    version: Optional[str] = None
+    # Optional: variants matched within this technology (e.g. v2/v3 of reCAPTCHA).
+    # Empty list = no sub-variant detection ran or no variant matched.
+    variants: list[Variant] = Field(default_factory=list)
 
 
 class Strategy(BaseModel):
